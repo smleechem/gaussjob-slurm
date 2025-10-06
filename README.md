@@ -192,15 +192,6 @@ Verify your partition grants the requested CPUs, and your Gaussian route isn’t
 
 ---
 
-## Roadmap
-
-* Optional `--partition` / `--qos`
-* Optional GPU toggle
-* Auto-inject `%NProcShared` if absent
-* Email notifications (`--mail-type/--mail-user`)
-
----
-
 ## Contributing
 
 PRs and issues are welcome. When reporting bugs, please include your SLURM version and a brief description of your cluster environment.
