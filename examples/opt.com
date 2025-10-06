@@ -1,6 +1,6 @@
 %nprocshared=10
-%mem=30GB
-%chk=5cb_opt.chk
+%mem=20GB
+%chk=opt.chk
 #p B3LYP/6-31+G(d,p) EmpiricalDispersion=GD3BJ SCRF=(IEFPCM,Solvent=Water) Opt=(Tight)
 
 5CB optimization in water (B3LYP-D3BJ/6-31+G(d,p))
