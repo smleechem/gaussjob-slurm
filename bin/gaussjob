@@ -1,0 +1,124 @@
+#!/bin/sh
+# gaussjob: Submit a Gaussian16 job to SLURM with per-job scratch and cleanup.
+# Usage:
+#   gaussjob NODE [INPUT.(com|gjf)] [CPUS] [TIME]
+# Examples:
+#   gaussjob n1                    # -> uses input.com, 10 CPUs, 168:00:00
+#   gaussjob n1 test.com 14
+#   gaussjob n3 job.gjf 16 72:00:00
+#
+# Notes:
+#   - NODE is required.
+#   - INPUT defaults to "input.com" and must exist in the current directory (or give a path).
+#   - CPUS defaults to 10.
+#   - TIME defaults to 168:00:00 (7 days).
+#   - Creates per-job scratch at $SCR_BASE/$SLURM_JOB_ID and removes it on exit/signals.
+
+set -euo pipefail
+
+# ---------- USER EDIT AREA ----------
+G16_EXEC="/home/smlee99/program/g16/g16"   # Gaussian16 executable
+GAUSS_EXEDIR="/home/smlee99/program/g16"   # Gaussian directory (for GAUSS_EXEDIR)
+SCR_BASE="/home/smlee99/scratch"           # Base path for per-job scratch
+JOBNAME="g16"                              # SLURM job name prefix
+DEFAULT_TIME="168:00:00"                   # Default walltime (can be overridden by arg 4)
+# -----------------------------------
+
+usage() {
+  echo "Usage: $(basename "$0") NODE [INPUT.(com|gjf)] [CPUS] [TIME]"
+  echo "  NODE  : required (e.g., n1)"
+  echo "  INPUT : optional (default: input.com). File must exist."
+  echo "  CPUS  : optional (default: 10)"
+  echo "  TIME  : optional (default: $DEFAULT_TIME)  e.g., 72:00:00"
+  exit 1
+}
+
+# --- Parse args ---
+[ $# -lt 1 ] || [ $# -gt 4 ] && usage
+NODELIST="$1"
+INPUT="${2:-input.com}"
+CPUS="${3:-10}"
+TIME_LIMIT="${4:-$DEFAULT_TIME}"
+
+# --- Sanity checks ---
+case "$CPUS" in
+  ''|*[!0-9]* ) echo "ERROR: CPUS must be a positive integer (got: '$CPUS')" >&2; exit 2;;
+  * ) [ "$CPUS" -gt 0 ] || { echo "ERROR: CPUS must be > 0" >&2; exit 2; } ;;
+esac
+command -v sbatch >/dev/null || { echo "ERROR: sbatch not found in PATH" >&2; exit 2; }
+[ -f "$INPUT" ] || { echo "ERROR: input file not found: $INPUT" >&2; exit 2; }
+
+# Resolve absolute input path (works on GNU/BSD)
+if INPUT_ABS="$(readlink -f "$INPUT" 2>/dev/null)"; then :; else
+  INPUT_ABS="$(realpath "$INPUT")"
+fi
+INPUT_BASE="$(basename "$INPUT")"     # e.g., job.com or job.gjf
+BASENAME="${INPUT_BASE%.*}"           # e.g., job
+EXT="${INPUT_BASE##*.}"               # e.g., com or gjf
+
+# Create a temporary batch file in the current directory (kept for traceability)
+BATCH_FILE="$(mktemp -p . gaussjob_XXXXXX.sbatch)"
+
+cat > "$BATCH_FILE" <<EOF
+#!/bin/sh
+#SBATCH -J $JOBNAME
+#SBATCH -o ${JOBNAME}.%j.out
+#SBATCH -t $TIME_LIMIT
+#SBATCH --gres=gpu:0
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=$CPUS
+#SBATCH --nodelist=$NODELIST
+
+set -euo pipefail
+
+cd "\$SLURM_SUBMIT_DIR"
+
+# ---- Gaussian paths ----
+g16exec="$G16_EXEC"
+export GAUSS_EXEDIR="$GAUSS_EXEDIR"
+
+# ---- Per-job scratch ----
+SCR_BASE="$SCR_BASE"
+SCR_DIR="\$SCR_BASE/\$SLURM_JOB_ID"
+mkdir -p "\$SCR_DIR"
+export GAUSS_SCRDIR="\$SCR_DIR"
+
+# Use SLURM CPU setting for OpenMP
+export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
+
+# Cleanup scratch in all normal/handled termination cases
+cleanup() {
+  sleep 1
+  if [ -n "\${GAUSS_SCRDIR:-}" ] && [ -d "\$GAUSS_SCRDIR" ]; then
+    rm -rf "\$GAUSS_SCRDIR"
+  fi
+}
+trap cleanup EXIT INT TERM HUP QUIT USR1 USR2
+
+# Ensure input is present in the submit directory (safe even if already there)
+# cp -f "$INPUT_ABS" "\$SLURM_SUBMIT_DIR/$BASENAME.$EXT"
+
+echo "== Gaussian16 submit =="
+echo "Host           : \$(hostname)"
+echo "JobID          : \$SLURM_JOB_ID"
+echo "Submit dir     : \$(pwd)"
+echo "Input          : $BASENAME.$EXT"
+echo "OMP threads    : \$OMP_NUM_THREADS"
+echo "GAUSS_SCRDIR   : \$GAUSS_SCRDIR"
+echo "Time limit     : $TIME_LIMIT"
+echo "Node list      : $NODELIST"
+echo "========================"
+
+# Run Gaussian
+# Standard: g16 input.com > input.log
+"\$g16exec" "\$SLURM_SUBMIT_DIR/$BASENAME.$EXT" > "\$SLURM_SUBMIT_DIR/$BASENAME.log" 2>&1
+
+echo "Run finished. Output: $BASENAME.log"
+EOF
+
+# Submit the job and print tracking info
+JOBID=$(sbatch "$BATCH_FILE" | awk '{print $NF}')
+echo "Submitted Gaussian job: $JOBID"
+echo "  Batch script: $BATCH_FILE"
+echo "  SLURM log   : ${JOBNAME}.${JOBID}.out"
