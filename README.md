@@ -20,7 +20,7 @@ gaussjob-slurm/
 ├─ bin/
 │  └─ gaussjob            # the script (chmod +x)
 ├─ examples/
-│  └─ water_opt.com       # small placeholder Gaussian input
+│  └─ opt.com       # small placeholder Gaussian input
 ├─ LICENSE
 └─ README.md
 ```
